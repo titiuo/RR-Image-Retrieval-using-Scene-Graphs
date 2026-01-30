@@ -1,47 +1,85 @@
-from pyvis.network import Network
-import webbrowser
-import tempfile
-import os
-import numpy as np
+import json
+
+# 1. The SceneGraph Class (The Data Container)
+class SceneGraph:
+    def __init__(self, filename):
+        self.filename = filename  # Store the image filename (e.g., "1024.jpg")
+        self.objects = []
+        self.relationships = []
+
+    def add_object(self, class_id, attribute_ids, bbox):
+        self.objects.append({
+            "class_id": class_id,
+            "attributes": attribute_ids,
+            "bbox": bbox  # Store bbox [x, y, w, h]
+        })
+
+    def add_relationship(self, subject_idx, relation_id, object_idx):
+        self.relationships.append({
+            "subject_idx": subject_idx,
+            "relation_id": relation_id,
+            "object_idx": object_idx
+        })
 
 
-def visualize_graph(graph_path, index=None):
-    import json
-    # Load the scene graph
-    with open(graph_path, 'r') as f:
-        graphs = json.load(f)
+# 2. The Vocabulary Helper (To map "man" -> 1, "dog" -> 2)
+class Vocabulary:
+    def __init__(self):
+        self.to_id = {}
+        self.to_word = {}
+    
+    def add(self, word):
+        if word not in self.to_id:
+            idx = len(self.to_id)
+            self.to_id[word] = idx
+            self.to_word[idx] = word
+            return idx
+        return self.to_id[word]
 
-    # Select the graph to visualize
-    if index is None:
-        index = np.random.randint(0, len(graphs))
-   
-    graph = graphs[index]
+    def get_word(self, idx):
+        return self.to_word.get(idx, "UNK")
 
-    net = Network(notebook=False, cdn_resources='remote')
+# 3. The Loading Function
+# --- Updated Loader to capture Bounding Boxes ---
+def load_scene_graphs(json_path):
+    with open(json_path, 'r') as f:
+        raw_data = json.load(f)
 
-    # Add nodes for objects
-    for obj_id in range(len(graph['objects'])):
-        obj_name = graph['objects'][obj_id]['names'][0]
-        net.add_node(obj_id, label=obj_name, color="rgb(221, 162, 169)")
+    graphs = []
+    obj_vocab = Vocabulary()
+    attr_vocab = Vocabulary()
+    rel_vocab = Vocabulary()
 
-        for attr_id in range(len(graph['objects'][obj_id]['attributes'])):
-            attr_name = graph['objects'][obj_id]['attributes'][attr_id]['attribute']
-            attr_node_id = f"{obj_id}_attr_{attr_id}"
-            net.add_node(attr_node_id, label=attr_name, color="rgb(169, 221, 162)")
-            net.add_edge(obj_id, attr_node_id,arrows='to',color="lightgray")
+    for entry in raw_data:
+        # Pass filename to the constructor
+        sg = SceneGraph(entry['filename'])
+        
+        # Process Objects
+        for obj in entry['objects']:
+            name_str = obj['names'][0]
+            c_id = obj_vocab.add(name_str)
+            
+            a_ids = []
+            if 'attributes' in obj:
+                for attr in obj['attributes']:
+                    attr_str = attr['attribute'] if isinstance(attr, dict) else attr
+                    a_ids.append(attr_vocab.add(attr_str))
+            
+            # Capture BBOX: Ensure we get x, y, w, h
+            # The JSON usually has it as 'bbox': {'x':..., 'y':..., 'w':..., 'h':...} 
+            # or sometimes just a list. We assume dict based on your previous code.
+            bbox = obj['bbox'] 
+            
+            sg.add_object(c_id, a_ids, bbox)
 
-    # Add edges for relationships
-    for rel_id in range(len(graph['relationships'])):
-        rel = graph['relationships'][rel_id]
-        subj_id = rel['objects'][0]
-        obj_id = rel['objects'][1]
-        rel_name = rel['relationship']
-        rel_node_id = f"rel_{rel_id}"
-        net.add_node(rel_node_id, label=rel_name, color="rgb(201, 238, 253)")
-        net.add_edge(subj_id, rel_node_id, arrows='to', color="lightgray")
-        net.add_edge(rel_node_id, obj_id, arrows='to', color="lightgray")
+        # Process Relationships
+        for rel in entry['relationships']:
+            subj_idx = rel['objects'][0]
+            obj_idx = rel['objects'][1]
+            rel_str = rel['relationship']
+            r_id = rel_vocab.add(rel_str)
+            sg.add_relationship(subj_idx, r_id, obj_idx)
+            
+        graphs.append(sg)
 
-    # Save and open the visualization in a web browser
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tf:
-        net.save_graph(tf.name)
-        webbrowser.open('file://' + os.path.realpath(tf.name))
+    return graphs, obj_vocab, attr_vocab, rel_vocab
