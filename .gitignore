@@ -1,1 +1,3 @@
 sg_dataset/
+_pycache_/
+*.pyc
