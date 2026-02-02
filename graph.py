@@ -2,10 +2,14 @@ import json
 
 # 1. The SceneGraph Class (The Data Container)
 class SceneGraph:
-    def __init__(self, filename):
-        self.filename = filename  # Store the image filename (e.g., "1024.jpg")
+    def __init__(self, filename=None):
         self.objects = []
         self.relationships = []
+        if filename:
+            self.filename = filename  # Store the image filename (e.g., "1024.jpg")
+        else:
+            print("Warning: No filename provided for SceneGraph.")
+            self.filename = "unknown.jpg"
 
     def add_object(self, class_id, attribute_ids, bbox):
         self.objects.append({
@@ -83,3 +87,14 @@ def load_scene_graphs(json_path):
         graphs.append(sg)
 
     return graphs, obj_vocab, attr_vocab, rel_vocab
+
+
+
+
+class ImageCandidates:
+    def __init__(self, boxes, features):
+        self.boxes = boxes        # [N, 4] numpy array (x, y, w, h)
+        self.features = features  # [N, 4096] numpy array
+    
+    def num_boxes(self):
+        return len(self.boxes)

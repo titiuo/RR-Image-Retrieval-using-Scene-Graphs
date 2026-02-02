@@ -1,34 +1,17 @@
 import numpy as np
-from sklearn.mixture import GaussianMixture
+import os
+import sys
 
 # ==========================================
 # PHASE 1: DATA STRUCTURES
 # ==========================================
 
-class SceneGraph:
-    def __init__(self):
-        self.objects = []       # List of {class_id, attributes}
-        self.relationships = [] # List of {subject_idx, relation_id, object_idx}
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_ROOT_DIR = os.path.dirname(_THIS_DIR)
+if _ROOT_DIR not in sys.path:
+    sys.path.insert(0, _ROOT_DIR)
 
-    def add_object(self, class_id, attribute_ids=None):
-        if attribute_ids is None: attribute_ids = []
-        self.objects.append({"class_id": class_id, "attributes": attribute_ids})
-        return len(self.objects) - 1
-
-    def add_relationship(self, subject_idx, relation_id, object_idx):
-        self.relationships.append({
-            "subject_idx": subject_idx,
-            "relation_id": relation_id,
-            "object_idx": object_idx
-        })
-
-class ImageCandidates:
-    def __init__(self, boxes, features):
-        self.boxes = boxes        # [N, 4] numpy array (x, y, w, h)
-        self.features = features  # [N, 4096] numpy array
-    
-    def num_boxes(self):
-        return len(self.boxes)
+from graph import SceneGraph, ImageCandidates
 
 # ==========================================
 # PHASE 2: SCORING FUNCTIONS (POTENTIALS)
@@ -252,8 +235,8 @@ if __name__ == "__main__":
     print("Creating Scene Graph Query...")
     # Graph: "Man(0) [Old(100)] ON(5) Boat(1)"
     graph = SceneGraph()
-    idx_man = graph.add_object(class_id=0, attribute_ids=[100]) # Man, Old
-    idx_boat = graph.add_object(class_id=1)                     # Boat
+    idx_man = graph.add_object(class_id=0, attribute_ids=[100], bbox=[10, 20, 30, 40]) # Man, Old
+    idx_boat = graph.add_object(class_id=1, attribute_ids=[], bbox=[50, 60, 70, 80])                     # Boat
     graph.add_relationship(idx_man, 5, idx_boat)                # Man ON Boat
 
     # --- 3. RUN PIPELINE ---
