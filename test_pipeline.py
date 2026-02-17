@@ -645,5 +645,5 @@ def run_full_evaluation():
 if __name__ == "__main__":
     # If run directly, execute full eval
     if RUN_INFERENCE:
-        #run_retrieval_sanity_check()
-        run_full_evaluation()
+        run_retrieval_sanity_check()
+        #run_full_evaluation()
