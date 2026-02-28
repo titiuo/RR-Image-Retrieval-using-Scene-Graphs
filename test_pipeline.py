@@ -26,7 +26,7 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.abspath(os.path.join(ROOT_DIR, '..', 'data'))
 SG_DIR = os.path.abspath(os.path.join(ROOT_DIR, '..', 'sg_dataset'))
 MODEL_DIR = os.path.abspath(os.path.join(ROOT_DIR, '..', 'model'))
-TRAINED_DIR = os.path.join(ROOT_DIR, 'trained_models')
+TRAINED_DIR = os.path.join(ROOT_DIR, 'CRF', 'trained_models')
 
 # Files
 CSV_PATH = os.path.join(DATA_DIR, 'rcnn_training_cleaned.csv')

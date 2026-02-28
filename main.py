@@ -18,30 +18,14 @@ Output (written to cwd = IPOL work directory):
 import os
 import sys
 import base64
+import pickle
 import traceback
 from io import BytesIO
 
 # ---------------------------------------------------------------------------
 # Path resolution
-#
-# IPOL clones the repo into $bin and sets $bin as the working directory when
-# building, but sets a *separate* work dir (cwd) at runtime for outputs.
-#
-# test_pipeline.py uses paths like:
-#   ROOT_DIR  = dirname(abspath(__file__))          → .../CRF/
-#   DATA_DIR  = ROOT_DIR/../data/
-#   SG_DIR    = ROOT_DIR/../sg_dataset/
-#   MODEL_DIR = ROOT_DIR/../model/
-#
-# Since IPOL calls  python3 $bin/main.py  (main.py is at repo root, not CRF/),
-# we must point sys.path at the repo root AND patch the DATA_DIR / SG_DIR /
-# MODEL_DIR constants BEFORE importing test_pipeline, so it resolves the
-# large assets from /assets (downloaded at Docker build time).
 # ---------------------------------------------------------------------------
-
-# $bin is the repo root (IPOL sets this env var)
-BIN_DIR    = os.environ.get("bin", os.path.dirname(os.path.abspath(__file__)))
-# Large assets were extracted here at Docker build time (see Dockerfile)
+BIN_DIR    = os.environ.get("bin", os.path.dirname(os.path.abspath(__file__))).rstrip("/")
 ASSETS_DIR = os.environ.get("ASSETS_DIR", "/assets")
 
 # Add repo root and CRF sub-package to path
@@ -49,47 +33,91 @@ sys.path.insert(0, BIN_DIR)
 sys.path.insert(0, os.path.join(BIN_DIR, "CRF"))
 
 # ---------------------------------------------------------------------------
-# Patch asset paths BEFORE importing test_pipeline.
-# test_pipeline reads these as module-level constants, so we override them
-# via environment variables that it already respects (FEATURE_CACHE_PATH),
-# and by monkey-patching after import for the rest.
+# Concrete asset paths — defined ONCE here, passed explicitly everywhere.
+# Never rely on test_pipeline's module-level constants which resolve
+# relative to __file__ and may point to wrong locations.
 # ---------------------------------------------------------------------------
+UNARY_MODEL_PATH  = os.path.join(BIN_DIR,    "CRF", "trained_models", "unary_potentials.pkl")
+BINARY_MODEL_PATH = os.path.join(BIN_DIR,    "CRF", "trained_models", "binary_potentials.pkl")
+BINARY_PLATT_PATH = os.path.join(BIN_DIR,    "CRF", "trained_models", "platt_params_binary_potentials.pkl")
 FEATURE_CACHE_PATH = os.path.join(ASSETS_DIR, "data", "rcnn_test_features.pkl")
-os.environ["FEATURE_CACHE_PATH"] = FEATURE_CACHE_PATH
-
-try:
-    import test_pipeline as tp
-except ImportError as e:
-    print(f"[ERROR] Could not import test_pipeline: {e}", file=sys.stderr)
-    traceback.print_exc()
-    sys.exit(1)
-
-# Patch path constants so helpers (find_image_path, load_feature_cache, etc.)
-# look inside /assets instead of relative to the repo.
-tp.DATA_DIR  = os.path.join(ASSETS_DIR, "data")
-tp.SG_DIR    = os.path.join(ASSETS_DIR, "sg_dataset")
-tp.MODEL_DIR = os.path.join(ASSETS_DIR, "model")
-
-# trained_models/ IS in the repo (committed) — keep pointing there
-tp.TRAINED_DIR = os.path.join(BIN_DIR, "CRF", "trained_models")
-
-# Re-derive file paths that depend on the dirs above
-tp.FEATURE_CACHE_PATH        = FEATURE_CACHE_PATH
-tp.TEST_ANNOTATIONS_PATH     = os.path.join(tp.SG_DIR, "sg_test_annotations.json")
-tp.UNARY_MODEL_PATH          = os.path.join(tp.TRAINED_DIR, "unary_potentials.pkl")
-tp.BINARY_MODEL_PATH         = os.path.join(tp.TRAINED_DIR, "binary_potentials.pkl")
-tp.BINARY_PLATT_PATH         = os.path.join(tp.TRAINED_DIR, "platt_params_binary_potentials.pkl")
-tp.IMAGE_ROOT_CANDIDATES     = [
-    os.path.join(tp.SG_DIR, "sg_test_images"),
-    os.path.join(tp.SG_DIR, "sg_train_images"),
-    os.path.join(tp.SG_DIR, "images"),
+IMAGE_ROOTS = [
+    os.path.join(ASSETS_DIR, "sg_dataset", "sg_test_images"),
+    os.path.join(ASSETS_DIR, "sg_dataset", "sg_train_images"),
+    os.path.join(ASSETS_DIR, "sg_dataset", "images"),
 ]
 
-TOP_K = 10
+TOP_K = 4  # Match the Streamlit app
 
 
 # ---------------------------------------------------------------------------
-# Parsing helpers
+# Imports (after path setup)
+# ---------------------------------------------------------------------------
+try:
+    from CRF.test_pipeline import CRFInference
+except ImportError:
+    try:
+        from test_pipeline import CRFInference
+    except ImportError as e:
+        print(f"[ERROR] Could not import CRFInference: {e}", file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def find_image_path(image_name):
+    for root in IMAGE_ROOTS:
+        path = os.path.join(root, image_name)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def load_feature_cache():
+    """
+    Load the feature cache directly — does NOT use test_pipeline's version
+    so we control the path explicitly and avoid any stale module-level state.
+    """
+    if not os.path.exists(FEATURE_CACHE_PATH):
+        print(f"[ERROR] Feature cache not found: {FEATURE_CACHE_PATH}", file=sys.stderr)
+        return None
+
+    print(f"[INFO] Loading feature cache from: {FEATURE_CACHE_PATH}", file=sys.stderr)
+    with open(FEATURE_CACHE_PATH, "rb") as f:
+        try:
+            header = pickle.load(f)
+        except EOFError:
+            return None
+
+        # Stream format: header has _stream=True, then individual entries
+        if isinstance(header, dict) and header.get("_stream") is True:
+            cache = {}
+            while True:
+                try:
+                    entry = pickle.load(f)
+                except EOFError:
+                    break
+                if isinstance(entry, dict) and entry.get("image"):
+                    cache[entry["image"]] = {
+                        "boxes":    entry.get("boxes", []),
+                        "features": entry.get("features"),
+                    }
+            print(f"[INFO] Stream cache loaded: {len(cache)} images", file=sys.stderr)
+            return cache
+
+        # Dict format: header IS the cache
+        if isinstance(header, dict):
+            print(f"[INFO] Dict cache loaded: {len(header)} images", file=sys.stderr)
+            return header
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Query parsing
 # ---------------------------------------------------------------------------
 
 def parse_objects(raw: str) -> list:
@@ -107,49 +135,49 @@ def parse_relationships(raw: str, n_objects: int) -> list:
     for entry in raw.split(","):
         tokens = entry.strip().split()
         if len(tokens) < 3:
-            print(f"[WARN] Skipping malformed relationship: '{entry.strip()}' "
-                  f"(need: subj_idx predicate obj_idx)", file=sys.stderr)
+            print(f"[WARN] Skipping malformed relationship: '{entry.strip()}'", file=sys.stderr)
             continue
         try:
             subj = int(tokens[0])
             obj  = int(tokens[-1])
             pred = " ".join(tokens[1:-1])
         except ValueError:
-            print(f"[WARN] Indices must be integers in: '{entry.strip()}'", file=sys.stderr)
+            print(f"[WARN] Non-integer indices in: '{entry.strip()}'", file=sys.stderr)
             continue
         if not (0 <= subj < n_objects and 0 <= obj < n_objects):
-            print(f"[WARN] Index out of range in: '{entry.strip()}' "
-                  f"(valid range: 0–{n_objects - 1})", file=sys.stderr)
+            print(f"[WARN] Index out of range in: '{entry.strip()}'", file=sys.stderr)
             continue
         if subj == obj:
-            print(f"[WARN] Subject == object in: '{entry.strip()}', skipping.", file=sys.stderr)
+            print(f"[WARN] Self-relationship skipped: '{entry.strip()}'", file=sys.stderr)
             continue
         rels.append([subj, pred, obj])
     return rels
 
 
 # ---------------------------------------------------------------------------
-# Retrieval
+# Retrieval — mirrors the Streamlit app's retrieve_images() exactly
 # ---------------------------------------------------------------------------
 
-def run_retrieval(query_graph: dict) -> list:
-    print("[INFO] Loading feature cache...", file=sys.stderr)
-    feature_cache = tp.load_feature_cache()
-    if not feature_cache:
-        print(f"[ERROR] Feature cache not found or empty at: {tp.FEATURE_CACHE_PATH}",
-              file=sys.stderr)
-        sys.exit(1)
-
-    print(f"[INFO] Loaded {len(feature_cache)} images from cache.", file=sys.stderr)
-
+def run_retrieval(query_graph: dict, feature_cache: dict) -> list:
     print("[INFO] Loading CRF models...", file=sys.stderr)
-    pipeline = tp.CRFInference(tp.UNARY_MODEL_PATH, tp.BINARY_MODEL_PATH, tp.BINARY_PLATT_PATH)
+
+    # Validate model files
+    for label, path in [
+        ("Unary model",  UNARY_MODEL_PATH),
+        ("Binary model", BINARY_MODEL_PATH),
+    ]:
+        if not os.path.exists(path):
+            print(f"[ERROR] {label} not found: {path}", file=sys.stderr)
+            sys.exit(1)
+
+    pipeline = CRFInference(UNARY_MODEL_PATH, BINARY_MODEL_PATH, BINARY_PLATT_PATH)
 
     results = []
     total = len(feature_cache)
     report_every = max(1, total // 20)
 
-    print(f"[INFO] Scoring {total} images...", file=sys.stderr)
+    print(f"[INFO] Scoring {total} images against query: {query_graph}", file=sys.stderr)
+
     for idx, (fname, cache_data) in enumerate(feature_cache.items()):
         if idx % report_every == 0:
             print(f"[INFO]   {idx}/{total}", file=sys.stderr)
@@ -162,16 +190,22 @@ def run_retrieval(query_graph: dict) -> list:
         try:
             score, _ = pipeline.beam_search(boxes, features, query_graph)
             if score > -9000:
-                results.append((fname, score))
+                results.append((fname, score, boxes))   # 3-tuple like the Streamlit app
         except Exception as e:
             print(f"[WARN] Skipping {fname}: {e}", file=sys.stderr)
 
     results.sort(key=lambda x: x[1], reverse=True)
-    return results[:TOP_K]
+    top = results[:TOP_K]
+
+    print(f"[INFO] Top {len(top)} results:", file=sys.stderr)
+    for rank, (fname, score, _) in enumerate(top, 1):
+        print(f"[INFO]   #{rank}  {fname}  score={score:.4f}", file=sys.stderr)
+
+    return top
 
 
 # ---------------------------------------------------------------------------
-# HTML output (self-contained, base64-embedded thumbnails)
+# HTML output
 # ---------------------------------------------------------------------------
 
 def image_to_data_uri(img_path: str):
@@ -192,7 +226,6 @@ def write_html(query_graph: dict, results: list, out_path: str):
     objects = query_graph["objects"]
     rels    = query_graph["relationships"]
 
-    # --- Query summary ---
     obj_tags = " ".join(f'<span class="tag">{o}</span>' for o in objects)
 
     if rels:
@@ -208,26 +241,21 @@ def write_html(query_graph: dict, results: list, out_path: str):
             f'<tbody>{rel_rows}</tbody></table>'
         )
     else:
-        rel_block = "<p class='muted'>No relationships specified — object-only search.</p>"
+        rel_block = "<p class='muted'>No relationships — object-only search.</p>"
 
-    # --- Gallery cards ---
     if results:
         cards = ""
-        for rank, (fname, score) in enumerate(results, 1):
-            img_path = tp.find_image_path(fname)
+        for rank, (fname, score, boxes) in enumerate(results, 1):
+            img_path = find_image_path(fname)
             src = None
             if img_path and os.path.exists(img_path):
                 src = image_to_data_uri(img_path)
 
-            if src:
-                img_tag = f'<img src="{src}" alt="{fname}" loading="lazy">'
-            else:
-                img_tag = (
-                    f'<div class="no-img">'
-                    f'<span>Image not found</span>'
-                    f'<small>{fname}</small>'
-                    f'</div>'
-                )
+            img_tag = (
+                f'<img src="{src}" alt="{fname}" loading="lazy">'
+                if src else
+                '<div class="no-img"><span>Image not found</span></div>'
+            )
 
             cards += (
                 f'<div class="card">'
@@ -256,8 +284,8 @@ def write_html(query_graph: dict, results: list, out_path: str):
     background: #f0f2f5; color: #222;
   }}
   h1  {{ font-size: 1.5rem; margin-bottom: 4px; }}
-  h2  {{ font-size: 1rem; margin: 16px 0 8px; color: #555; text-transform: uppercase;
-         letter-spacing: .05em; }}
+  h2  {{ font-size: 1rem; margin: 16px 0 8px; color: #555;
+         text-transform: uppercase; letter-spacing: .05em; }}
   .query-box {{
     background: #fff; border: 1px solid #ddd; border-radius: 8px;
     padding: 16px 20px; margin-bottom: 28px;
@@ -268,38 +296,29 @@ def write_html(query_graph: dict, results: list, out_path: str):
     border-radius: 4px; padding: 3px 11px; margin: 2px 3px 2px 0;
     font-size: .9rem; font-weight: 600;
   }}
-  .rel-table {{
-    border-collapse: collapse; margin-top: 8px; font-size: .9rem;
-  }}
-  .rel-table th, .rel-table td {{
-    border: 1px solid #e0e0e0; padding: 5px 16px;
-  }}
+  .rel-table {{ border-collapse: collapse; margin-top: 8px; font-size: .9rem; }}
+  .rel-table th, .rel-table td {{ border: 1px solid #e0e0e0; padding: 5px 16px; }}
   .rel-table thead {{ background: #f7f7f7; font-weight: 600; }}
   .pred {{ font-style: italic; color: #666; text-align: center; }}
   .muted {{ color: #888; font-style: italic; margin-top: 4px; }}
-  .gallery {{
-    display: flex; flex-wrap: wrap; gap: 16px;
-  }}
+  .gallery {{ display: flex; flex-wrap: wrap; gap: 16px; }}
   .card {{
     background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
-    width: 200px; padding: 8px;
+    width: 220px; padding: 8px;
     box-shadow: 0 2px 6px rgba(0,0,0,.08);
     transition: transform .15s ease;
   }}
   .card:hover {{ transform: translateY(-4px); box-shadow: 0 6px 16px rgba(0,0,0,.12); }}
-  .card img {{
-    width: 100%; height: 155px; object-fit: cover; border-radius: 5px; display: block;
-  }}
+  .card img {{ width: 100%; height: 165px; object-fit: cover; border-radius: 5px; display: block; }}
   .no-img {{
-    width: 100%; height: 155px; background: #f0f0f0; border-radius: 5px;
-    display: flex; flex-direction: column; align-items: center;
-    justify-content: center; color: #aaa; font-size: .8rem; gap: 4px;
-    text-align: center; padding: 8px;
+    width: 100%; height: 165px; background: #f0f0f0; border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    color: #aaa; font-size: .8rem;
   }}
   .caption {{ font-size: .78rem; margin-top: 7px; color: #555; line-height: 1.4; }}
   .rank  {{ font-weight: 700; color: #1a56db; margin-right: 5px; font-size: .85rem; }}
   .fname {{
-    display: inline-block; max-width: 155px;
+    display: inline-block; max-width: 175px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     vertical-align: bottom; font-size: .78rem;
   }}
@@ -307,19 +326,13 @@ def write_html(query_graph: dict, results: list, out_path: str):
 </style>
 </head>
 <body>
-
 <h1>&#128269; Scene Graph Image Retrieval &mdash; Results</h1>
-
 <div class="query-box">
-  <h2>Objects</h2>
-  {obj_tags}
-  <h2>Relationships</h2>
-  {rel_block}
+  <h2>Objects</h2>{obj_tags}
+  <h2>Relationships</h2>{rel_block}
 </div>
-
 <h2>Top {len(results)} Retrieved Image(s)</h2>
 {gallery_html}
-
 </body>
 </html>"""
 
@@ -342,36 +355,25 @@ def main():
         )
         sys.exit(1)
 
-    # Validate required model files before doing any heavy work
-    missing = []
-    for label, path in [
-        ("Unary model",   tp.UNARY_MODEL_PATH),
-        ("Binary model",  tp.BINARY_MODEL_PATH),
-        ("Feature cache", tp.FEATURE_CACHE_PATH),
-    ]:
-        if not os.path.exists(path):
-            missing.append(f"  {label}: {path}")
-    if missing:
-        print("[ERROR] The following required files are missing:", file=sys.stderr)
-        for m in missing:
-            print(m, file=sys.stderr)
-        sys.exit(1)
-
     objects = parse_objects(sys.argv[1])
     if not objects:
-        print("[ERROR] No valid objects found in first argument.", file=sys.stderr)
+        print("[ERROR] No valid objects in first argument.", file=sys.stderr)
         sys.exit(1)
 
     relationships = parse_relationships(sys.argv[2], len(objects))
     query_graph   = {"objects": objects, "relationships": relationships}
+    print(f"[INFO] Query → {query_graph}", file=sys.stderr)
 
-    print(f"[INFO] Query → objects={objects}, relationships={relationships}", file=sys.stderr)
+    # Load cache directly — controlled path, no stale module state
+    feature_cache = load_feature_cache()
+    if not feature_cache:
+        print("[ERROR] Feature cache is empty or missing.", file=sys.stderr)
+        sys.exit(1)
 
-    results  = run_retrieval(query_graph)
+    results  = run_retrieval(query_graph, feature_cache)
     out_path = os.path.join(os.getcwd(), "results.html")
     write_html(query_graph, results, out_path)
-
-    print(f"[INFO] Done — {len(results)} result(s) written to {out_path}", file=sys.stderr)
+    print(f"[INFO] Done — {len(results)} result(s).", file=sys.stderr)
 
 
 if __name__ == "__main__":
