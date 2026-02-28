@@ -9,6 +9,7 @@ import streamlit as st
 from PIL import Image
 import numpy as np
 import pandas as pd
+from plot import visualize_graph, visualize_graph_html, draw_bboxes_on_image
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -24,7 +25,7 @@ RELATION_CLASSES_CSV  = os.path.join(DATA_DIR, 'relation_classes.csv')
 
 try:
     from CRF import train_unary
-    from graph import load_scene_graphs
+    from graph import load_scene_graphs, build_predicted_scene_graph, build_predicted_scene_graph_with_gt_labels
     from test_pipeline import (
         CRFInference,
         UNARY_MODEL_PATH, BINARY_MODEL_PATH, BINARY_PLATT_PATH,
@@ -49,7 +50,7 @@ def inject_css():
 
     .stApp {
         background-color: #0f1117;
-        color: #e2e8f0;
+        color: #FFFFFF;
     }
 
     #MainMenu, footer, header { visibility: hidden; }
@@ -78,7 +79,7 @@ def inject_css():
     .sg-header .sg-subtitle {
         font-family: 'IBM Plex Mono', monospace;
         font-size: 0.75rem;
-        color: #4a5568;
+        color: #FFFFFF;
         letter-spacing: 0.08em;
         text-transform: uppercase;
     }
@@ -133,7 +134,7 @@ def inject_css():
     .phrase-block .ph-obj   { color: #90cdf4; font-weight: 500; }
     .phrase-block .ph-attr  { color: #9ae6b4; }
     .phrase-block .ph-rel   { color: #fbd38d; }
-    .phrase-block .ph-arrow { color: #4a5568; }
+    .phrase-block .ph-arrow { color: #FFFFFF; }
     .phrase-empty {
         font-family: 'IBM Plex Mono', monospace;
         font-size: 0.8rem;
@@ -156,7 +157,7 @@ def inject_css():
         font-family: 'IBM Plex Mono', monospace;
         font-size: 0.7rem;
         font-weight: 600;
-        color: #4a5568;
+        color: #FFFFFF;
         text-transform: uppercase;
         letter-spacing: 0.06em;
     }
@@ -168,7 +169,7 @@ def inject_css():
     .result-fname {
         font-family: 'IBM Plex Mono', monospace;
         font-size: 0.62rem;
-        color: #4a5568;
+        color: #FFFFFF;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -198,7 +199,7 @@ def inject_css():
         background: #111827 !important;
         border: 1px solid #2d3748 !important;
         border-radius: 6px !important;
-        color: #e2e8f0 !important;
+        color: #FFFFFF !important;
         font-family: 'IBM Plex Mono', monospace !important;
         font-size: 0.82rem !important;
     }
@@ -213,7 +214,7 @@ def inject_css():
     .attr-group-label {
         font-family: 'IBM Plex Mono', monospace;
         font-size: 0.65rem;
-        color: #4a5568;
+        color: #FFFFFF;
         margin: 10px 0 4px 0;
         letter-spacing: 0.06em;
     }
@@ -222,7 +223,7 @@ def inject_css():
     div[data-testid="column"]:last-child .stButton > button {
         background: transparent !important;
         border: 1px solid #2d3748 !important;
-        color: #4a5568 !important;
+        color: #FFFFFF !important;
         padding: 2px 6px !important;
         font-size: 0.7rem !important;
     }
@@ -267,12 +268,27 @@ def load_models():
     obj_classes, attr_classes, rel_classes = load_classes_from_csv()
     feature_cache = load_feature_cache()
     pipeline = CRFInference(UNARY_MODEL_PATH, BINARY_MODEL_PATH, BINARY_PLATT_PATH)
+    
+    # Load scene graphs with vocabularies
+    try:
+        scene_graphs, obj_vocab, attr_vocab, rel_vocab = load_scene_graphs(TEST_ANNOTATIONS_PATH)
+        # Create a mapping from filename to scene graph for quick lookup
+        scene_graph_dict = {sg.filename: sg for sg in scene_graphs}
+    except Exception as e:
+        st.warning(f"Could not load scene graphs: {e}")
+        scene_graph_dict = {}
+        obj_vocab = attr_vocab = rel_vocab = None
+    
     return {
         'feature_cache': feature_cache,
         'pipeline':      pipeline,
         'obj_classes':   obj_classes,
         'attr_classes':  attr_classes,
         'rel_classes':   rel_classes,
+        'scene_graph_dict': scene_graph_dict,
+        'obj_vocab': obj_vocab,
+        'attr_vocab': attr_vocab,
+        'rel_vocab': rel_vocab,
     }
 
 
@@ -330,7 +346,8 @@ def retrieve_images(query_graph, top_k=4):
                     continue
                 score, _ = pipeline.beam_search(boxes, features, query_graph)
                 if score > -9000:
-                    results.append((img_filename, score))
+                    # Store filename, score, and boxes for visualization
+                    results.append((img_filename, score, boxes))
             except Exception:
                 continue
     except Exception as e:
@@ -596,43 +613,112 @@ def main():
             unsafe_allow_html=True
         )
 
-        n_cols = 4
-        rows   = [results[i:i + n_cols] for i in range(0, len(results), n_cols)]
-
-        for row in rows:
-            cols = st.columns(n_cols, gap="small")
-            for col, (fname, score) in zip(cols, row):
-                rank = results.index((fname, score)) + 1
-                with col:
-                    img_path = find_image_path(fname)
-                    if img_path and os.path.exists(img_path):
-                        try:
-                            img = Image.open(img_path)
-                            st.image(img, use_container_width=True)
-                        except Exception as e:
-                            st.markdown(
-                                '<div style="height:140px;background:#111827;border-radius:6px;'
-                                'display:flex;align-items:center;justify-content:center;'
-                                'color:#e53e3e;font-family:IBM Plex Mono,monospace;font-size:0.65rem;">'
-                                'load error</div>',
-                                unsafe_allow_html=True
+        # Display each result as one row: predicted image on left, scene graph on right
+        for rank, result in enumerate(results, 1):
+            # Unpack result - can be 2-tuple (legacy) or 3-tuple (with boxes)
+            if len(result) == 3:
+                fname, score, boxes = result
+            else:
+                fname, score = result
+                boxes = []
+            
+            col_img, col_sg = st.columns(2, gap="medium")
+            
+            # Left column: Predicted image with RCNN bounding boxes
+            with col_img:
+                st.markdown(f'<p style="font-size:0.8rem;color:#a0aec0;margin-bottom:8px;">'
+                           f'<span style="color:#FFFFFF;font-weight:bold;">#{rank}</span> {fname} '
+                           f'<span style="color:#68d391;">{score:.4f}</span></p>', 
+                           unsafe_allow_html=True)
+                img_path = find_image_path(fname)
+                if img_path and os.path.exists(img_path):
+                    try:
+                        # Create predicted scene graph with GT labels matched by IoU
+                        scene_graph_dict = models['scene_graph_dict']
+                        obj_vocab = models['obj_vocab']
+                        
+                        if fname in scene_graph_dict and obj_vocab and boxes:
+                            # Match predicted boxes to ground truth labels
+                            gt_sg = scene_graph_dict[fname]
+                            predicted_sg = build_predicted_scene_graph_with_gt_labels(
+                                boxes, gt_sg, obj_vocab, iou_threshold=0.3
                             )
-                    else:
+                        else:
+                            # Fallback: use predicted boxes without labels
+                            from graph import Vocabulary
+                            fallback_vocab = Vocabulary()
+                            fallback_vocab.add("detected_object")
+                            predicted_sg_temp = build_predicted_scene_graph(boxes, filename=fname)
+                            predicted_sg = predicted_sg_temp
+                            obj_vocab = fallback_vocab
+                        
+                        if predicted_sg.objects:
+                            # Draw predicted bounding boxes on the image with proper labels
+                            img = draw_bboxes_on_image(img_path, predicted_sg, obj_vocab)
+                        else:
+                            img = Image.open(img_path)
+                        
+                        st.image(img, use_container_width=True)
+                    except Exception as e:
                         st.markdown(
-                            '<div style="height:140px;background:#111827;border-radius:6px;'
+                            '<div style="height:300px;background:#111827;border-radius:6px;'
                             'display:flex;align-items:center;justify-content:center;'
-                            'color:#2d3748;font-family:IBM Plex Mono,monospace;font-size:0.7rem;">'
-                            'no image</div>',
+                            'color:#e53e3e;font-family:IBM Plex Mono,monospace;font-size:0.75rem;">'
+                            f'Load error: {str(e)[:40]}</div>',
                             unsafe_allow_html=True
                         )
+                else:
                     st.markdown(
-                        f'<div class="result-meta">'
-                        f'  <span class="result-rank"># {rank}</span>'
-                        f'  <span class="result-score">{score:.4f}</span>'
-                        f'</div>'
-                        f'<div class="result-fname">{fname}</div>',
+                        '<div style="height:300px;background:#111827;border-radius:6px;'
+                        'display:flex;align-items:center;justify-content:center;'
+                        'color:#2d3748;font-family:IBM Plex Mono,monospace;font-size:0.75rem;">'
+                        'Image not found</div>',
                         unsafe_allow_html=True
                     )
+            
+            # Right column: Ground truth scene graph visualization (for comparison)
+            with col_sg:
+                st.markdown(f'<p style="font-size:0.8rem;color:#a0aec0;margin-bottom:8px;visibility:hidden;">placeholder</p>', 
+                           unsafe_allow_html=True)
+                
+                scene_graph_dict = models['scene_graph_dict']
+                if fname in scene_graph_dict:
+                    try:
+                        # Use ground truth scene graph for comparison
+                        gt_sg = scene_graph_dict[fname]
+                        obj_vocab = models['obj_vocab']
+                        attr_vocab = models['attr_vocab']
+                        rel_vocab = models['rel_vocab']
+                        
+                        if all([obj_vocab, attr_vocab, rel_vocab, gt_sg.objects]):
+                            html_content = visualize_graph_html(gt_sg, obj_vocab, attr_vocab, rel_vocab, height="500px")
+                            st.components.v1.html(html_content, height=500, scrolling=True)
+                        else:
+                            st.markdown(
+                                '<div style="height:400px;background:#111827;border-radius:6px;'
+                                'display:flex;align-items:center;justify-content:center;'
+                                'color:#2d3748;font-family:IBM Plex Mono,monospace;font-size:0.75rem;">'
+                                'Ground truth data incomplete</div>',
+                                unsafe_allow_html=True
+                            )
+                    except Exception as e:
+                        st.markdown(
+                            '<div style="height:400px;background:#111827;border-radius:6px;'
+                            'display:flex;align-items:center;justify-content:center;'
+                            'color:#e53e3e;font-family:IBM Plex Mono,monospace;font-size:0.75rem;">'
+                            f'Error: {str(e)[:50]}</div>',
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.markdown(
+                        '<div style="height:400px;background:#111827;border-radius:6px;'
+                        'display:flex;align-items:center;justify-content:center;'
+                        'color:#2d3748;font-family:IBM Plex Mono,monospace;font-size:0.75rem;">'
+                        'Ground truth not found</div>',
+                        unsafe_allow_html=True
+                    )
+            
+            st.markdown("---")
 
 
 if __name__ == "__main__":
