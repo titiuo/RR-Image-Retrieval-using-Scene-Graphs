@@ -1,72 +1,67 @@
 # .ipol/Dockerfile
+# Use the official IPOL base image — this sets up $bin, $HOME,
+# the ipol user, and all IPOL-specific conventions automatically.
 FROM registry.ipol.im/ipol:v2-py3.11
 
-ENV DEBIAN_FRONTEND=noninteractive
+# ------------------------------------------------------------
+# 1. Install Python dependencies from requirements.txt
+# ------------------------------------------------------------
+COPY requirements.txt requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt && rm requirements.txt
 
 # ------------------------------------------------------------
-# 1. System dependencies
+# 2. Copy repo code into $bin
 # ------------------------------------------------------------
-RUN apt-get update && apt-get install -y \
-    python3 python3-pip \
-    wget unzip \
-    libglib2.0-0 libsm6 libxext6 libxrender-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# ------------------------------------------------------------
-# 2. Python dependencies
-#    Install PyPI packages first, then torch separately
-#    with its own index (mixing --index-url with other packages
-#    breaks pip because it replaces PyPI entirely).
-# ------------------------------------------------------------
-RUN pip3 install --no-cache-dir \
-    numpy \
-    scipy \
-    scikit-learn \
-    pandas \
-    Pillow \
-    matplotlib
-
-RUN pip3 install --no-cache-dir \
-    torch torchvision \
-    --index-url https://download.pytorch.org/whl/cpu
+ENV bin /workdir/bin/
+RUN mkdir -p $bin
+WORKDIR $bin
+COPY . .
 
 # ------------------------------------------------------------
 # 3. Download large assets from GitHub Release v1.0.0
+#    into /assets/ so test_pipeline.py can find them.
+#    (trained_models/ is already in the repo → copied above)
 # ------------------------------------------------------------
 ENV GITHUB_RELEASE_URL=https://github.com/titiuo/RR-Image-Retrieval-using-Scene-Graphs/releases/download/v1.0.0
 ENV ASSETS_DIR=/assets
 
 RUN mkdir -p ${ASSETS_DIR}
 
-# --- data.zip → /assets/data/ ---
+# data.zip → /assets/data/
 RUN wget -q --show-progress \
     "${GITHUB_RELEASE_URL}/data.zip" \
     -O /tmp/data.zip \
     && unzip -q /tmp/data.zip -d ${ASSETS_DIR} \
     && rm /tmp/data.zip \
-    && echo "data.zip extracted OK" \
-    && ls ${ASSETS_DIR}/data/
+    && echo "data.zip OK" && ls ${ASSETS_DIR}/data/
 
-# --- model.zip → /assets/model/ ---
+# model.zip → /assets/model/
 RUN wget -q --show-progress \
     "${GITHUB_RELEASE_URL}/model.zip" \
     -O /tmp/model.zip \
     && unzip -q /tmp/model.zip -d ${ASSETS_DIR} \
     && rm /tmp/model.zip \
-    && echo "model.zip extracted OK" \
-    && ls ${ASSETS_DIR}/model/
+    && echo "model.zip OK" && ls ${ASSETS_DIR}/model/
 
-# --- sg_test_images.zip → /assets/sg_dataset/sg_test_images/ ---
+# sg_test_images.zip → /assets/sg_dataset/sg_test_images/
 RUN wget -q --show-progress \
     "${GITHUB_RELEASE_URL}/sg_test_images.zip" \
     -O /tmp/sg_test_images.zip \
     && mkdir -p ${ASSETS_DIR}/sg_dataset \
     && unzip -q /tmp/sg_test_images.zip -d ${ASSETS_DIR}/sg_dataset \
     && rm /tmp/sg_test_images.zip \
-    && echo "sg_test_images.zip extracted OK" \
-    && ls ${ASSETS_DIR}/sg_dataset/
+    && echo "sg_test_images.zip OK" && ls ${ASSETS_DIR}/sg_dataset/
 
 # ------------------------------------------------------------
-# 4. Smoke-test
+# 4. IPOL conventions (mirrors the original Dockerfile)
 # ------------------------------------------------------------
-RUN python3 -c "import numpy, PIL, sklearn, torch, scipy, pandas; print('All imports OK')"
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION python
+ENV PATH $bin:$PATH
+ENV HOME /home/ipol
+
+RUN groupadd -g 1000 ipol \
+    && useradd -m -u 1000 -g 1000 ipol -d $HOME \
+    && chmod -R 777 $HOME
+
+USER ipol
