@@ -1,0 +1,55 @@
+{
+   "general": {
+      "demo_title": "Image Retrieval using Scene Graphs",
+      "description": "Given a scene graph query (a set of objects and their spatial/semantic relationships), this demo retrieves the most relevant images from a pre-indexed test dataset using a CRF-based scoring pipeline.",
+      "requirements": "docker",
+      "timeout": "3600"
+   },
+   "build": {
+      "url": "git@github.com:titiuo/RR-Image-Retrieval-using-Scene-Graphs.git",
+      "rev": "origin/main",
+      "dockerfile": ".ipol/Dockerfile"
+   },
+   "archive": {
+      "files": {
+         "results.html": "results gallery"
+      },
+      "params": [
+         "objects",
+         "relationships"
+      ],
+      "enable_reconstruct": "true",
+      "info": {
+         "run_time": "run time"
+      }
+   },
+   "inputs": [],
+   "params": [
+      {
+         "id": "objects",
+         "type": "text",
+         "label": "Objects (comma-separated)",
+         "comments": "List the objects you want to search for, separated by commas. Example: person, horse, tree",
+         "values": {
+            "default": "person, horse"
+         }
+      },
+      {
+         "id": "relationships",
+         "type": "text",
+         "label": "Relationships (optional)",
+         "comments": "Define relationships between objects using their 0-based index from the list above. Format per entry: subj_index predicate obj_index — separate multiple with commas. Example: '0 on 1, 0 next_to 2' means person-on-horse and person-next_to-tree. Leave empty for an object-only search.",
+         "values": {
+            "default": "0 on 1"
+         }
+      }
+   ],
+   "results": [
+      {
+         "type": "html_file",
+         "label": "Retrieval Results",
+         "contents": "results.html"
+      }
+   ],
+   "run": "python3 $bin/main.py '${objects}' '${relationships}'"
+}
