@@ -60,8 +60,9 @@ ENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION python
 ENV PATH $bin:$PATH
 ENV HOME /home/ipol
 
-RUN groupadd -g 1000 ipol \
-    && useradd -m -u 1000 -g 1000 ipol -d $HOME \
-    && chmod -R 777 $HOME
+RUN groupadd -g 1001 ipol \
+    && useradd -m -u 1001 -g 1001 ipol -d $HOME \
+    && chmod -R 777 $HOME \
+    && chmod -R 777 /assets
 
 USER ipol
