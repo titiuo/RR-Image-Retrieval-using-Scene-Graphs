@@ -1,5 +1,5 @@
 # .ipol/Dockerfile
-FROM ubuntu:22.04
+FROM registry.ipol.im/ipol:v2-py3.11
 
 ENV DEBIAN_FRONTEND=noninteractive
 
