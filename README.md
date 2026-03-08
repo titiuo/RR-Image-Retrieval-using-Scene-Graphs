@@ -13,9 +13,10 @@
 3. [Reproducibility Challenges & Resolutions](#reproducibility-challenges--resolutions)
 4. [Implementation Details](#implementation-details)
 5. [Results](#results)
-6. [Discussion](#discussion)
-7. [Installation & Usage](#installation--usage)
-8. [References](#references)
+6. [Qualitative Results](#qualitative-results)
+7. [Discussion](#discussion)
+8. [Installation & Usage](#installation--usage)
+9. [References](#references)
 
 ---
 
@@ -172,6 +173,47 @@ Two primary failure modes:
 
 1. **Semantic Ambiguity:** Generic queries (e.g., "tree next to building") match many images equally well.
 2. **Proposal & Feature Limitations:** GOP misses critical objects; AlexNet features lack the discriminative power of modern architectures, causing "semantic sibling" confusion (e.g., planes ↔ boats).
+
+### Qualitative Results
+
+#### Success Case (Rank 1)
+
+The model successfully leverages both object appearance and spatial relationships to retrieve the exact ground-truth image.
+
+<p align="center">
+  <img src="img/rank1.png" width="48%" alt="Top retrieved image at Rank 1"/>
+  &nbsp;&nbsp;
+  <img src="img/graph1.png" width="48%" alt="Query scene graph"/>
+</p>
+<p align="center"><em>Left: Top retrieved image (Rank 1). Right: Query scene graph.</em></p>
+
+When GOP generates accurate candidate boxes, the CRF engine effectively combines strong unary visual priors with binary spatial potentials to filter structural distractors and find the exact geometric match.
+
+#### Failure Case (Rank 657)
+
+GOP fails to propose a bounding box for a critical query object, preventing the CRF from grounding the full graph.
+
+<p align="center">
+  <img src="img/rank657.png" width="48%" alt="Incorrectly retrieved top image"/>
+  &nbsp;&nbsp;
+  <img src="img/graph2.png" width="48%" alt="Query scene graph"/>
+</p>
+<p align="center"><em>Left: Incorrect top retrieved image. Right: Query scene graph. Ground-truth retrieved at Rank 657.</em></p>
+
+This highlights the pipeline's strict dependency on high-recall proposal mechanisms — a single missed proposal cascades into a complete grounding failure.
+
+#### Average Case (Rank 23)
+
+The model retrieves a structurally related but incorrect image, illustrating semantic ambiguity and feature overlap.
+
+<p align="center">
+  <img src="img/rank3.png" width="48%" alt="Structurally related but incorrect retrieved image"/>
+  &nbsp;&nbsp;
+  <img src="img/graph3.png" width="48%" alt="Query scene graph"/>
+</p>
+<p align="center"><em>Left: Highest-ranked retrieved image (incorrect but structurally related). Right: Query scene graph. Ground-truth retrieved at Rank 23.</em></p>
+
+The model finds an image with a matching spatial arrangement but substitutes visually analogous objects. This suggests that while geometric constraints are robust, AlexNet features sometimes lack the fine-grained discriminative power to separate similar classes.
 
 ---
 
