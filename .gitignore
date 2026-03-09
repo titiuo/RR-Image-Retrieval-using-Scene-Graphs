@@ -1,7 +1,8 @@
 sg_dataset/
-_pycache_/
+__pycache__/
 *.pyc
 demo_ipol.py
 app2.py
 RCNN/data/
-img/
+RCNN/__pycache__/
+CRF/__pycache__/
