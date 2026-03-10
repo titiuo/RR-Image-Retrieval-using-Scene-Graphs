@@ -51,6 +51,15 @@ import sys
 # dossier du fichier courant : Demo/
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Get the directory of the current script (Demo)
+#current_dir = os.path.dirname(os.path.abspath(__file__))
+# Get the parent directory (RR-Image-Retrieval-using-Scene-Graphs)
+parent_dir = os.path.dirname(CURRENT_DIR)
+
+# Add the parent directory to sys.path so Python can find 'CRF'
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 # racine du projet : RR-Image-Retrieval-using-Scene-Graphs/
 ROOT_DIR = os.path.dirname(CURRENT_DIR)
 
