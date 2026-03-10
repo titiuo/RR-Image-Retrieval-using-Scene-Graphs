@@ -10,7 +10,7 @@ from PIL import Image
 import numpy as np
 import pandas as pd
 from plot import visualize_graph, visualize_graph_html, draw_bboxes_on_image
-
+"""
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -35,8 +35,39 @@ try:
 except ImportError as e:
     st.error(f"Import Error: {e}")
     sys.exit(1)
+"""
 
 
+# Obtenir le chemin du dossier demo
+DEMO_DIR = os.path.dirname(os.path.abspath(__file__))
+# Remonter d'un niveau pour obtenir le root du projet
+ROOT_DIR = os.path.dirname(DEMO_DIR)
+
+# Ajouter les chemins nécessaires
+sys.path.insert(0, ROOT_DIR)  # Pour accéder aux dossiers CRF, RCNN, etc.
+sys.path.insert(0, DEMO_DIR)  # Pour les imports entre fichiers du demo
+
+# Define paths (en utilisant ROOT_DIR comme base)
+DATA_DIR = os.path.abspath(os.path.join(ROOT_DIR, 'data'))
+SG_DIR = os.path.abspath(os.path.join(ROOT_DIR, 'sg_dataset'))
+
+OBJECT_CLASSES_CSV = os.path.join(DATA_DIR, 'object_classes.csv')
+ATTRIBUTE_CLASSES_CSV = os.path.join(DATA_DIR, 'attribute_classes.csv')
+RELATION_CLASSES_CSV = os.path.join(DATA_DIR, 'relation_classes.csv')
+
+try:
+    from CRF import train_unary
+    from graph import load_scene_graphs, build_predicted_scene_graph, build_predicted_scene_graph_with_gt_labels
+    from test_pipeline import (
+        CRFInference,
+        UNARY_MODEL_PATH, BINARY_MODEL_PATH, BINARY_PLATT_PATH,
+        TEST_ANNOTATIONS_PATH, FEATURE_CACHE_PATH,
+        find_image_path, load_feature_cache,
+    )
+except ImportError as e:
+    st.error(f"Import Error: {e}")
+    sys.exit(1)
+    
 # ── Styling ────────────────────────────────────────────────────────────────────
 
 def inject_css():
