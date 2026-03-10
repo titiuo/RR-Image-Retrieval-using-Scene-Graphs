@@ -14,18 +14,42 @@ from PIL import Image
 import matplotlib.pyplot as plt
 
 # --- IMPORTS ---
+import os
+import sys
+
+# Get the directory of the current script (Demo)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# Get the parent directory (RR-Image-Retrieval-using-Scene-Graphs)
+parent_dir = os.path.dirname(current_dir)
+
+# Add the parent directory to sys.path so Python can find 'CRF'
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+# --- NOW YOUR IMPORTS WILL WORK ---
 try:
     from CRF import train_unary 
-    from graph import load_scene_graphs
-except ImportError:
-    print("ERROR: Run this script as a module: python -m CRF.test_pipeline")
+    from graph import load_scene_graphs # This works if graph.py is in Demo or the parent
+except ImportError as e:
+    print(f"ERROR: {e}")
     exit(1)
 
 # --- PATHS ---
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.abspath(os.path.join(ROOT_DIR, '..', 'data'))
-SG_DIR = os.path.abspath(os.path.join(ROOT_DIR, '..', 'sg_dataset'))
-MODEL_DIR = os.path.abspath(os.path.join(ROOT_DIR, '..', 'model'))
+# Now points to RR-Image-Retrieval-using-Scene-Graphs/Demo/
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Move up ONE level to reach the project root: RR-Image-Retrieval-using-Scene-Graphs/
+ROOT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, '..'))
+
+# Move up TWO levels to reach the main workspace root (where data and model live)
+WORKSPACE_ROOT = os.path.abspath(os.path.join(ROOT_DIR, '..'))
+
+# --- REFACTORED PATHS ---
+DATA_DIR = os.path.join(WORKSPACE_ROOT, 'data')
+SG_DIR = os.path.join(WORKSPACE_ROOT, 'sg_dataset')
+MODEL_DIR = os.path.join(WORKSPACE_ROOT, 'model')
+
+# Since CRF is in the ROOT_DIR (one level up from Demo)
 TRAINED_DIR = os.path.join(ROOT_DIR, 'CRF', 'trained_models')
 
 # Files
