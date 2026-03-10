@@ -20,7 +20,7 @@ import base64
 import pickle
 import traceback
 from io import BytesIO
-
+"""
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -39,9 +39,40 @@ IMAGE_ROOTS = [
     os.path.join(ASSETS_DIR, "sg_dataset", "sg_train_images"),
     os.path.join(ASSETS_DIR, "sg_dataset", "images"),
 ]
+TOP_K = 4
+"""
+
+# --------------------------------------------------------------------
+# Paths
+# --------------------------------------------------------------------
+import os
+import sys
+
+# dossier du fichier courant : Demo/
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# racine du projet : RR-Image-Retrieval-using-Scene-Graphs/
+ROOT_DIR = os.path.dirname(CURRENT_DIR)
+
+BIN_DIR = os.environ.get("bin", ROOT_DIR).rstrip("/")
+ASSETS_DIR = os.environ.get("ASSETS_DIR", os.path.join(ROOT_DIR, "assets"))
+
+sys.path.insert(0, BIN_DIR)
+sys.path.insert(0, os.path.join(BIN_DIR, "CRF"))
+
+UNARY_MODEL_PATH = os.path.join(BIN_DIR, "CRF", "trained_models", "unary_potentials.pkl")
+BINARY_MODEL_PATH = os.path.join(BIN_DIR, "CRF", "trained_models", "binary_potentials.pkl")
+BINARY_PLATT_PATH = os.path.join(BIN_DIR, "CRF", "trained_models", "platt_params_binary_potentials.pkl")
+
+FEATURE_CACHE_PATH = os.path.join(ASSETS_DIR, "data", "rcnn_test_features.pkl")
+
+IMAGE_ROOTS = [
+    os.path.join(ASSETS_DIR, "sg_dataset", "sg_test_images"),
+    os.path.join(ASSETS_DIR, "sg_dataset", "sg_train_images"),
+    os.path.join(ASSETS_DIR, "sg_dataset", "images"),
+]
 
 TOP_K = 4
-
 # ---------------------------------------------------------------------------
 # Import
 # ---------------------------------------------------------------------------
